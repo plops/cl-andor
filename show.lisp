@@ -36,6 +36,8 @@
        maximize (aref dat1 i))))
 
 
+(defparameter start-series 0)
+
 (defmethod glut:reshape ((win mk-window) w h)
   (setf (glut:width win) w
         (glut:height win) h)
@@ -70,6 +72,7 @@
 	   (single-float scale)
 	   (type (simple-array (unsigned-byte 8) *) bytes)
 	   (type (simple-array (signed-byte 32) *) dat1))
+	  (format t "texture size ~a ~%" (list w h))
 	  (loop for i below len do
 	       (setf (aref bytes i)
 		     (floor (* scale 
@@ -80,30 +83,38 @@
 			  0 :luminance :unsigned-byte ptr)))
 	(tex-image-2d target 0 :luminance w h
 		      0 :luminance :unsigned-byte (cffi:null-pointer))))
-  
+  (andor:start-acquisition)
+  (setf start-series (andor:val3 (andor:get-acquisition-progress)))
   (glut:post-redisplay))
+
+(defparameter displayed-images 0)
 
 (defun draw ()
   (clear-color .1 .2 .4 1.)
   (clear :color-buffer-bit)
   (with-pushed-matrix
-    (let* ((z 0)
-	   (w 1392)
-	   (h 1040))
-     (with-primitive :quads
-       (tex-coord 0 0 z)
-       (vertex 0 0 z)
-       (tex-coord w 0 z)
-       (vertex w 0 z)
-       (tex-coord w h z)
-       (vertex w h z)
-       (tex-coord 0 h z)
-       (vertex 0 h z))))
+      (let* ((z 0)
+	     (w 1392)
+	     (h 1040))
+	(with-primitive :quads
+	  (tex-coord 0 0 z)
+	  (vertex 0 0 z)
+	  (tex-coord w 0 z)
+	  (vertex w 0 z)
+	  (tex-coord w h z)
+	  (vertex w h z)
+	  (tex-coord 0 h z)
+	  (vertex 0 h z))))
   (glut:swap-buffers)
-  (progn  
-    (andor:request-and-wait) 
-    (andor:copy-data)
-    nil)
+
+
+  (loop while (<= (- (andor:val3 (andor:get-acquisition-progress))
+		     start-series)
+		  displayed-images) do
+       (sleep .005))
+  (andor:copy-most-recent-data)
+
+
   (format t "~a ~%" (list (get-max)))
   (if andor:*im*
       (let* ((w andor:*w*)
@@ -132,20 +143,24 @@
 	  (tex-sub-image-2d :texture-rectangle-nv 0 0 0 w h
 			    :luminance :unsigned-byte ptr)))
       (format t "got no data~%"))
-  
+  (incf displayed-images)
   (glut:post-redisplay))
+
+
 
 (defmethod glut:display ((w mk-window))
   (draw))
 
 (defmethod glut:keyboard ((w mk-window) key x y)
   (case key
-    (#\Esc (glut:destroy-current-window))))
+    (#\Esc (progn (andor:abort-acquisition)
+		  (glut:destroy-current-window)))))
 
 (defun run ()
   (glut:display-window (make-instance 'mk-window)))
 
-#+nil
+
+(andor:init-run-till-abort)
 (run)
  
 #+nil
@@ -180,3 +195,4 @@
 #+nil
 (time
  (andor:exit))
+
