@@ -9,9 +9,17 @@
 	   copy-data
 	   exit
 	   get-acquired-data
+	   init-run-till-abort
+	   copy-most-recent-data
+	   abort-acquisition
+	   start-acquisition
+	   wait
 	   *w*
 	   *h*
-	   *im*))
+	   *im*
+	   val3
+	   val2
+	   get-acquisition-progress))
 
 (in-package :andor)
 
@@ -76,6 +84,7 @@
 (define-alien-routine ("ShutDown" shutdown)
     unsigned-int)
 
+(defconstant drv-success 20002)
 (defconstant drv-acquiring 20072)
 (defconstant drv-idle 20073)
 (defconstant drv-tempcycle 20074)
@@ -159,7 +168,120 @@
   (typ int)
   (index int))
 
+(define-alien-routine ("GetBitDepth" get-bit-depth)
+    unsigned-int
+  (channel int)
+  (depth int :out))
 
+(define-alien-routine ("GetHSSpeed" get-hs-speed)
+    unsigned-int
+  (channel int)
+  (typ int)
+  (index int)
+  (speed float :out))
+
+(define-alien-routine ("GetVSSpeed" get-vs-speed)
+    unsigned-int
+  (index int)
+  (speed float :out))
+
+(define-alien-routine ("GetPreAmpGain" get-pre-amp-gain)
+    unsigned-int
+  (index int)
+  (gain float :out))
+
+(define-alien-routine ("IsPreAmpGainAvailable" is-pre-amp-gain-available)
+    unsigned-int
+  (channel int)
+  (amplifier int)
+  (index int)
+  (pa int)
+  (status int :out))
+
+(define-alien-routine ("IsInternalMechanicalShutter" is-internal-mechanical-shutter)
+    unsigned-int
+  (internal-shutter int :out))
+#+nil 
+(is-internal-mechanical-shutter)
+
+(define-alien-routine ("GetCapabilities" get-capabilities)
+    unsigned-int
+  (caps (array unsigned-int 12) :out))
+
+#+nil (loop for i below 12 collect
+     (deref (val2 (get-capabilities)) i))
+
+(define-alien-routine ("GetTemperature" get-temperature)
+    unsigned-int
+  (temp int :out))
+
+(define-alien-routine ("GetTemperatureF" get-temperature-f) ;; detector in degrees celsius
+    unsigned-int
+  (temp float :out))
+
+#+nil 
+(get-temperature-f)
+
+(define-alien-routine ("GetTemperatureRange" get-temperature-range)
+    unsigned-int
+  (mintemp int :out)
+  (maxtemp int :out))
+
+#+nil 
+(get-temperature-range)
+
+(define-alien-routine ("GetTemperatureStatus" get-temperature-status)
+    unsigned-int
+  (sensor-temp float :out)
+  (target-temp float :out)
+  (ambient-temp float :out)
+  (cooler-volts float :out))
+
+#+nil
+(get-temperature-status)
+
+(define-alien-routine ("SetTemperature" set-temperature)
+    unsigned-int
+  (temp int))
+
+#+nil
+(set-temperature 0)
+
+(define-alien-routine ("CoolerON" cooler-on)
+    unsigned-int)
+
+(define-alien-routine ("CoolerOFF" cooler-off)
+    unsigned-int)
+
+(define-alien-routine ("FreeInternalMemory" free-internal-memory)
+    unsigned-int)
+
+(define-alien-routine ("IsCoolerOn" is-cooler-on)
+    unsigned-int
+  (status int :out))
+
+(define-alien-routine ("SetOutputAmplifier" set-output-amplifier)
+    unsigned-int
+  (typ int))
+
+(define-alien-routine ("SetFrameTransferMode" set-frame-transfer-mode)
+    unsigned-int
+  (mode int))
+
+(define-alien-routine ("SetTriggerMode" set-trigger-mode)
+    unsigned-int
+  (mode int))
+
+(define-alien-routine ("GetAcquisitionProgress" get-acquisition-progress)
+    unsigned-int
+  (acc long :out)  ;; number of accumulation and series scans completed
+  (series long :out)) ;; number of kinetic scans completed
+
+#+nil 
+(is-cooler-on)
+
+#+nil
+(cooler-on)
 
 ;; either use get-number-new-images and get-images or use
 ;; get-most-recent-image (or get-oldest-image)
@@ -191,14 +313,18 @@
 	  *h* h)))
 
 
-(defun request-and-wait ()
-  (start-acquisition)
+(defun wait ()
   (loop while (= drv-acquiring
 		 (multiple-value-bind (a b)
 		     (get-status)
 		   (declare (ignore a))
 		   b))
     do (sleep .005)))
+
+(defun request-and-wait ()
+  (start-acquisition)
+  (wait)
+  )
 
 (defparameter *im* nil)
 
@@ -214,17 +340,58 @@
 (defun exit ()
  (shutdown))
 
+(defmacro val2 (fn)
+  `(multiple-value-bind (a b)
+       ,fn
+     b))
+
+(defmacro val3 (fn)
+  `(multiple-value-bind (a b c)
+       ,fn
+     c))
+
 #+nil
-(init)
+(init) 
 
 #+nil
 (request-and-wait)
 
 #+nil
-(copy-data)
+(progn
+  (copy-data)
+  nil)
+
+#+nil
+(aref *im* 5 4)
 
 #+nil
 (exit)
+
+#+nil 
+(progn
+  (format t "~a~%"
+	  (list 
+	   "number-adc" (val2 (get-number-ad-channels))
+	   "number-amp" (val2 (get-number-amp))
+	   "number-pre-amp" (val2 (get-number-pre-amp-gains))
+	   "number-vs-speed" (val2 (get-number-vs-speeds))
+	   "vs-speed" (val2 (get-vs-speed 0))
+	   "bit-depths" 
+	   (loop for i below (val2 (get-number-ad-channels)) collect
+		(arg2 (get-bit-depth i)))
+	   "hs-speeds"
+	   (loop for chan below (val2 (get-number-ad-channels)) collect
+		(loop for amp below (val2 (get-number-amp)) collect
+		     (list "chan" chan "amp" amp "nr-speeds"
+			   (arg2 (get-number-hs-speeds chan amp))
+			   "hs-speeds"
+			   (loop for speed below (arg2 (get-number-hs-speeds chan amp))
+				collect
+				(list 
+				 "hs-speed" (val2 (get-hs-speed chan amp speed))
+				 "pre-amp-0?" (val2 (is-pre-amp-gain-available chan amp speed 0))
+				 "pre-amp-1?" (val2 (is-pre-amp-gain-available chan amp speed 1))
+				 "pre-amp-2?" (val2 (is-pre-amp-gain-available chan amp speed 2))))))))))
 
 (defun init-run-till-abort
     (&key (hbin 1) (vbin 1) (hstart 1) (vstart 1)
@@ -240,10 +407,14 @@
   
   (initialize "/usr/local/etc/andor")
   (set-read-mode 4)
+  (set-acquisition-mode 5)
   (set-kinetic-cycle-time 0f0)
   (set-exposure-time exposure-s)
-  (set-ad-channel 0)
-  (set-hs-speed 1 0)
+  (set-ad-channel 1)
+  (set-output-amplifier 0)
+  (set-hs-speed 0 0)
+  (set-frame-transfer-mode 1)
+  (set-trigger-mode 0)
   (multiple-value-bind (ret w2 h2)
       (get-detector)
     (declare (ignore ret))
@@ -262,12 +433,56 @@
  (init-run-till-abort))
 
 #+nil
-(progn
-  (start-acquisition)
-  )
+(start-acquisition)
+#+nil
+(copy-most-recent-data)
+#+nil
+(aref *im* 0 0)
+
+#+nil
+(val3 (get-acquisition-progress))
+
+#+nil
+(time 
+ (progn
+   (start-acquisition)
+   (let ((start (val3 (get-acquisition-progress))))
+     (dotimes (i 100)
+       (loop while (<= (- (val3 (get-acquisition-progress)) start)
+		       i) do
+	    (sleep .005))
+       (copy-most-recent-data)
+       (format t "~a~%" (list (aref *im* 0 0) 
+			      (val2 (get-total-number-images-acquired))
+			      (multiple-value-bind (a b c)
+				  (get-number-new-images)
+				(list b c))))))))
+#+nil
+(abort-acquisition)
+
+;; 9.374 s for 100 images
 
 ;; (get-number-vs-speeds)
 ;; (get-number-hs-speeds 1 1)
 ;; (get-number-ad-channels)
 ;; (get-number-amp)
 ;; (get-number-pre-amp-gains)
+
+;; (get-total-number-images-acquired)
+;; (get-size-of-circular-buffer)
+;; (get-number-new-images)
+
+(defun copy-most-recent-data ()
+  (setf *im*
+	(let* ((img (make-array (list *w* *h*) :element-type '(signed-byte 32)))
+	       (img1 (sb-ext:array-storage-vector img)))
+	  (sb-sys:with-pinned-objects (img1)
+	    (get-oldest-image (sb-sys:vector-sap img1)
+			       (* *w* *h*)))
+	  img))
+  (free-internal-memory))
+
+#+nil
+(progn
+  nil)
+
